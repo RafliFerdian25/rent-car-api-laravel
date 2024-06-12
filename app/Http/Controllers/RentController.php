@@ -14,14 +14,33 @@ use Illuminate\Support\Facades\Validator;
 
 class RentController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        // if (auth()->user()->role == 'admin') {
-        //     $rents = Rent::with('car', 'user')->get();
-        // } else {
-        //     $rents = Rent::with('car')->where('user_id', auth()->user()->id)->get();
-        // }
-        $rents = Rent::with('car:id,name,license_plate,rental_rate', 'user:id,name,address,phone,driving_license')->get();
+        if (auth()->user()->role == 'admin') {
+            $rents = Rent::with('car:id,name,license_plate,rental_rate', 'user:id,name,address,phone,driving_license')
+                ->when(
+                    $request->status,
+                    function ($query) use ($request) {
+                        $query->where('status', $request->status);
+                    },
+                    function ($query) {
+                        $query->where('status', '!=', 'kembali');
+                    }
+                )
+                ->get();
+        } else {
+            $rents = Rent::with('car:id,name,license_plate,rental_rate')->where('user_id', auth()->user()->id)
+                ->when(
+                    $request->status,
+                    function ($query) use ($request) {
+                        $query->where('status', $request->status);
+                    },
+                    function ($query) {
+                        $query->where('status', '!=', 'kembali');
+                    }
+                )
+                ->get();
+        }
 
         return ResponseFormatter::success([
             'rents' => $rents,
@@ -32,7 +51,15 @@ class RentController extends Controller
     {
         $rent = Rent::with('car:id,name,license_plate,rental_rate', 'user:id,name,address,phone,driving_license')->find($id);
 
+        // mengecek apakah data peminjaman ditemukan
         if (!$rent) {
+            return ResponseFormatter::error([
+                'error' => 'Data peminjaman tidak ditemukan',
+            ], 'Data peminjaman gagal diambil', 404);
+        }
+
+        // mengecek apakah data peminjaman milik user yang login
+        if (auth()->user()->id != $rent->user_id && auth()->user()->role != 'admin') {
             return ResponseFormatter::error([
                 'error' => 'Data peminjaman tidak ditemukan',
             ], 'Data peminjaman gagal diambil', 404);
@@ -85,8 +112,8 @@ class RentController extends Controller
                 $query->whereBetween('start_date', [$startDate, $endDate])
                     ->orWhereBetween('end_date', [$startDate, $endDate]);
             })
+            ->where('status', 'pinjam')
             ->exists();
-        dd($request->all());
 
         try {
             DB::beginTransaction();
@@ -101,9 +128,13 @@ class RentController extends Controller
                     'end_date' => $request->end_date,
                 ]);
 
+                if (!$rent) {
+                    throw new \Exception('Peminjaman Gagal');
+                }
+
                 DB::commit();
                 return ResponseFormatter::success([
-                    'redirect' => route('rent.index'),
+                    'rent' => $rent,
                 ], 'Peminjaman Berhasil');
             }
         } catch (\Exception $e) {
@@ -114,11 +145,18 @@ class RentController extends Controller
         }
     }
 
-    public function return(Rent $rent)
+    public function return(Rent $rent, Request $request)
     {
+        // mengecek apakah mobil sudah dikembalikan
+        if ($rent->status == 'kembali') {
+            return ResponseFormatter::error([
+                'error' => 'Mobil sudah dikembalikan',
+            ], 'Pengembalian Gagal', 500);
+        }
+
         // mengecek jika mobil belum pada waktu pinjam
         $startDate = Carbon::parse($rent->start_date);
-        $returnDate = Carbon::now();
+        $returnDate = $request->return_date ?? Carbon::now();
 
         if (Carbon::now()->isBefore($startDate)) {
             return ResponseFormatter::error([
@@ -145,15 +183,23 @@ class RentController extends Controller
         ]);
 
         return ResponseFormatter::success([
-            'redirect' => route('rent.index'),
+            'rent' => $rent,
         ], 'Pengembalian Berhasil');
     }
 
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Rent $rent)
+    public function destroy($id)
     {
+        $rent = Rent::find($id);
+        // authorize user
+        if (auth()->user()->id != $rent->user_id && auth()->user()->role != 'admin') {
+            return ResponseFormatter::error([
+                'error' => 'Data peminjaman tidak ditemukan',
+            ], 'Data peminjaman gagal dihapus', 404);
+        }
+
         // mengecek jika mobil pada waktu pinjam
         $startDate = Carbon::parse($rent->start_date);
         $endDate = Carbon::parse($rent->end_date);
@@ -170,8 +216,6 @@ class RentController extends Controller
 
         $rent->delete();
 
-        return ResponseFormatter::success([
-            'redirect' => route('rent.index'),
-        ], 'Peminjaman Berhasil Dihapus');
+        return ResponseFormatter::success(null, 'Peminjaman Berhasil Dihapus');
     }
 }

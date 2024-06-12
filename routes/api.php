@@ -45,7 +45,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/rent', 'index')->name('rent.data');
         Route::get('/rent/{id}', 'show')->name('rent.show');
         Route::post('/rent', 'store')->name('rent.store');
-        Route::delete('/rent/{rent:id}', 'destroy')->name('rent.destroy');
+        Route::delete('/rent/{id}', 'destroy')->name('rent.destroy');
         Route::post('/rent/{rent:id}/return', 'return')->name('rent.return');
     });
 });
